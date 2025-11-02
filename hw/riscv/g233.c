@@ -36,6 +36,11 @@
 #include "hw/char/pl011.h"
 
 /* TODO: you need include some header files */
+#include "hw/qdev-properties.h"
+#include "hw/gpio/sifive_gpio.h" 
+#include "system/device_tree.h"
+#include "hw/riscv/riscv_hart.h"
+
 
 static const MemMapEntry g233_memmap[] = {
     [G233_DEV_MROM] =     {     0x1000,     0x2000 },
@@ -53,6 +58,29 @@ static void g233_soc_init(Object *obj)
      * You can add more devices here(e.g. cpu, gpio)
      * Attention: The cpu resetvec is 0x1004
      */
+    G233SoCState *s = RISCV_G233_SOC(obj);
+
+    /*
+     * 初始化 CPU 和其他设备
+     * CPU resetvec 是 0x1004
+     */
+    
+    /* CPU 子系统初始化 */
+    object_initialize_child(obj, "g233-cpus", &s->cpus, TYPE_RISCV_HART_ARRAY);
+
+    /* 设置 CPU 数量为 1 */
+    qdev_prop_set_uint32(DEVICE(&s->cpus), "num-harts", 1);
+    qdev_prop_set_uint32(DEVICE(&s->cpus), "hartid-base", 0);
+
+    /* 设置 CPU 类型 */
+    qdev_prop_set_string(DEVICE(&s->cpus), "cpu-type", TYPE_RISCV_CPU_GEVICO_G233);
+
+    /* 设置 reset vector 地址 */
+    qdev_prop_set_uint64(DEVICE(&s->cpus), "resetvec", 0x1004);
+
+    /* 初始化 GPIO 设备 */
+    object_initialize_child(obj, "gpio", &s->gpio, TYPE_SIFIVE_GPIO);
+
 }
 
 static void g233_soc_realize(DeviceState *dev, Error **errp)
@@ -63,7 +91,10 @@ static void g233_soc_realize(DeviceState *dev, Error **errp)
     const MemMapEntry *memmap = g233_memmap;
 
     /* CPUs realize */
-
+    if (!sysbus_realize(SYS_BUS_DEVICE(&s->cpus), errp)) {
+        return;
+    }
+    
     /* Mask ROM */
     memory_region_init_rom(&s->mask_rom, OBJECT(dev), "riscv.g233.mrom",
                            memmap[G233_DEV_MROM].size, &error_fatal);
@@ -71,6 +102,7 @@ static void g233_soc_realize(DeviceState *dev, Error **errp)
                                 &s->mask_rom);
 
     /* MMIO */
+    /* 设备模型方式 */
     s->plic = sifive_plic_create(memmap[G233_DEV_PLIC].base,
                                  (char *)G233_PLIC_HART_CONFIG, ms->smp.cpus, 0,
                                  G233_PLIC_NUM_SOURCES,
@@ -160,9 +192,14 @@ static void g233_machine_init(MachineState *machine)
     }
 
     /* Initialize SoC */
-
+    object_initialize_child(OBJECT(machine), "soc", &s->soc,
+                           TYPE_RISCV_G233_SOC);
+    qdev_realize(DEVICE(&s->soc), NULL, &error_fatal);
 
     /* Data Memory(DDR RAM) */
+    memory_region_add_subregion(get_system_memory(),
+                               memmap[G233_DEV_DRAM].base,
+                               machine->ram);
 
     /* Mask ROM reset vector */
     uint32_t reset_vec[5];
@@ -178,6 +215,7 @@ static void g233_machine_init(MachineState *machine)
     rom_add_blob_fixed_as("mrom.reset", reset_vec, sizeof(reset_vec),
                           memmap[G233_DEV_MROM].base, &address_space_memory);
 
+    /* 初始化引导信息结构体 */
     riscv_boot_info_init(&boot_info, &s->soc.cpus);
     if (machine->kernel_filename) {
         riscv_load_kernel(machine, &boot_info,
@@ -188,6 +226,7 @@ static void g233_machine_init(MachineState *machine)
 
 static void g233_machine_instance_init(Object *obj)
 {
+    // G233MachineState *s = RISCV_G233_MACHINE(obj);
 }
 
 static void g233_machine_class_init(ObjectClass *oc, const void *data)

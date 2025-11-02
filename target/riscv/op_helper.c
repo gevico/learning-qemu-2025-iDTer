@@ -352,18 +352,94 @@ void helper_crush(CPURISCVState *env, target_ulong dst_addr,
     // }
 }
 
-/*
-* Expand 扩展指令实现
-*/
-void helper_expand(CPURISCVState *env,
-      target_ulong dst,
-      target_ulong src,
-      target_ulong num)
+/* 
+ * G233 Expand 解压指令 Helper
+ * 
+ * 功能：将 8 位数组元素拆分为两个 4 位数据存储到新数组
+ *       这是 crush 指令的逆操作
+ * 
+ * 参数：
+ *   - env: CPU 环境
+ *   - dst_addr: 目标数组地址（解压后的数据存储位置）
+ *   - src_addr: 源数组地址（待解压的数据）
+ *   - src_num: 源数组元素数量
+ * 
+ * 解压规则：
+ *   dst[2*i]   = src[i] & 0xF         (提取低 4 位)
+ *   dst[2*i+1] = (src[i] >> 4) & 0xF  (提取高 4 位)
+ * 
+ * 示例：
+ *   输入：{0xAB, 0xBC, 0xCD, 0xDE, 0xEF}
+ *   输出：{0x0B, 0x0A, 0x0C, 0x0B, 0x0D, 0x0C, 0x0E, 0x0D, 0x0F, 0x0E}
+ *   
+ *   解析：
+ *     0xAB → dst[0] = 0xB (低 4 位), dst[1] = 0xA (高 4 位)
+ *     0xBC → dst[2] = 0xC (低 4 位), dst[3] = 0xB (高 4 位)
+ *     0xCD → dst[4] = 0xD (低 4 位), dst[5] = 0xC (高 4 位)
+ *     0xDE → dst[6] = 0xE (低 4 位), dst[7] = 0xD (高 4 位)
+ *     0xEF → dst[8] = 0xF (低 4 位), dst[9] = 0xE (高 4 位)
+ */
+void helper_expand(CPURISCVState *env, target_ulong dst_addr,
+                target_ulong src_addr, target_ulong src_num)
 {
-    /* TODO: 实现扩展逻辑 */
-    qemu_log("Expand instruction not yet implemented\n");
-}
+    target_ulong i;
+    uint8_t src_byte, low_nibble, high_nibble;
+    target_ulong dst_num;
 
+    /* 参数验证 */
+    if (src_num == 0) {
+        /* 没有数据需要解压 */
+        return;
+    }
+
+    if (src_num > 1024) {
+        qemu_log_mask(LOG_GUEST_ERROR, 
+                      "EXPAND: src_num too large (%lu), capping at 1024\n", 
+                      src_num);
+        src_num = 1024;
+    }
+
+    /* 计算目标数组大小（每个源元素拆分为 2 个目标元素） */
+    dst_num = src_num * 2;
+
+    /* 
+     * 解压算法：
+     * 遍历源数组，每个元素拆分为两个目标元素
+     */
+    for (i = 0; i < src_num; i++) {
+        /* 读取源数组的一个字节 */
+        src_byte = cpu_ldub_data_ra(env, src_addr + i, GETPC());
+        
+        /* 提取低 4 位 */
+        low_nibble = src_byte & 0x0F;
+        
+        /* 提取高 4 位 */
+        high_nibble = (src_byte >> 4) & 0x0F;
+        
+        /* 
+         * 写入目标数组
+         * 注意顺序：先写低 4 位，再写高 4 位
+         */
+        cpu_stb_data_ra(env, dst_addr + 2 * i, low_nibble, GETPC());
+        cpu_stb_data_ra(env, dst_addr + 2 * i + 1, high_nibble, GETPC());
+    }
+    
+    /* 添加调试日志 */
+    qemu_log_mask(CPU_LOG_EXEC, 
+                  "EXPAND: src=0x%lx, dst=0x%lx, src_num=%lu, dst_num=%lu\n",
+                  (unsigned long)src_addr, (unsigned long)dst_addr, 
+                  src_num, dst_num);
+    
+    // /* 调试输出前几个解压结果 */
+    // if (qemu_loglevel_mask(CPU_LOG_EXEC) && dst_num > 0) {
+    //     qemu_log("EXPAND: First few unpacked bytes: ");
+    //     for (i = 0; i < (dst_num < 10 ? dst_num : 10); i++) {
+    //         uint8_t byte = cpu_ldub_data_ra(env, dst_addr + i, GETPC());
+    //         qemu_log("0x%02X ", byte);
+    //     }
+    //     qemu_log("\n");
+    // }
+}
 
 
 /*

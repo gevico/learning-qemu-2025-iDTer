@@ -27,6 +27,8 @@
 #include "exec/helper-proto.h"
 #include "exec/tlb-flags.h"
 #include "trace.h"
+#include "qemu/log.h"
+#include "qemu/log-for-trace.h"
 
 /* Exceptions processing helpers */
 G_NORETURN void riscv_raise_exception(CPURISCVState *env,
@@ -132,6 +134,101 @@ target_ulong helper_csrrw_i128(CPURISCVState *env, int csr,
     env->retxh = int128_gethi(rv);
     return int128_getlo(rv);
 }
+
+
+/*
+ * G233 DMA 矩阵转置指令 Helper
+ * 
+ * 参数：
+ *   - dst: 目标内存地址
+ *   - src: 源内存地址
+ *   - grain: 粒度参数 (0=8x8, 1=16x16, 2=32x32)
+ */
+void helper_dma(CPURISCVState *env, target_ulong dst, 
+                        target_ulong src, target_ulong grain)
+{
+    int matrix_size;
+    int total_elements;
+    uint32_t *src_matrix;
+    uint32_t *dst_matrix;
+    // CPUState *cs = env_cpu(env);
+
+    /* 根据粒度计算矩阵大小：N = 8 * 2^grain */
+    if (grain > 2) {
+        /* 非法粒度值，触发异常 */
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
+        return;
+    }
+
+    matrix_size = 8 << grain;  /* 8, 16, 32 */
+    total_elements = matrix_size * matrix_size;
+
+    /* 分配临时缓冲区 */
+    src_matrix = g_malloc(total_elements * sizeof(uint32_t));
+    dst_matrix = g_malloc(total_elements * sizeof(uint32_t));
+
+    /* 从源地址读取整个矩阵（按行优先顺序） */
+    for (int i = 0; i < total_elements; i++) {
+        src_matrix[i] = cpu_ldl_data_ra(env, src + i * 4, GETPC());
+    }
+
+    /* 执行矩阵转置：dst[i][j] = src[j][i] */
+    for (int i = 0; i < matrix_size; i++) {
+        for (int j = 0; j < matrix_size; j++) {
+            dst_matrix[i * matrix_size + j] = src_matrix[j * matrix_size + i];
+        }
+    }
+
+    /* 将转置后的矩阵写入目标地址 */
+    for (int i = 0; i < total_elements; i++) {
+        cpu_stl_data_ra(env, dst + i * 4, dst_matrix[i], GETPC());
+    }
+
+    /* 清理临时缓冲区 */
+    g_free(src_matrix);
+    g_free(dst_matrix);
+
+    /* 添加调试日志 */
+    // qemu_log_mask(CPU_LOG_EXEC, "DMA Transpose: matrix_size=%d, src=0x%lx, dst=0x%lx\n",
+    //             matrix_size, (unsigned long)src, (unsigned long)dst);
+}
+
+/*
+ * Sort 排序指令实现
+ */
+void helper_sort(CPURISCVState *env,
+    target_ulong addr,
+    target_ulong array_num,
+    target_ulong sort_num)
+{
+    /* TODO: 实现排序逻辑 */
+    qemu_log("Sort instruction not yet implemented\n");
+}
+
+/*
+* Crush 压缩指令实现
+*/
+void helper_crush(CPURISCVState *env,
+     target_ulong dst,
+     target_ulong src,
+     target_ulong num)
+{
+    /* TODO: 实现压缩逻辑 */
+    qemu_log("Crush instruction not yet implemented\n");
+}
+
+/*
+* Expand 扩展指令实现
+*/
+void helper_expand(CPURISCVState *env,
+      target_ulong dst,
+      target_ulong src,
+      target_ulong num)
+{
+    /* TODO: 实现扩展逻辑 */
+    qemu_log("Expand instruction not yet implemented\n");
+}
+
 
 
 /*

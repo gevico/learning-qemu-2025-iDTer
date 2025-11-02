@@ -53,6 +53,12 @@
 &u    imm rd
 &shift     shamt rs1 rd
 &atomic    aq rl rs2 rs1 rd
+# &g233      rs2 rs1 rd
+&dma       rs2 rs1 rd
+&sort      rs2 rs1 rd  
+&crush     rs2 rs1 rd
+&expand    rs2 rs1 rd
+
 &rmrr      vm rd rs1 rs2
 &rmr       vm rd rs2
 &r2nfvm    vm rd rs1 nf
@@ -73,7 +79,16 @@
 @csr     ............   .....  ... ..... .......               %csr     %rs1 %rd
 
 @atom_ld ..... aq:1 rl:1 ..... ........ ..... ....... &atomic rs2=0     %rs1 %rd
+# @atom_ld ..... aq:1 rl:1 ..... ..... ... ..... ....... &atomic rs2=0     %rs1 %rd
+
+# funct5(5) | aq(1) | rl(1) | rs2(5) | rs1(5) | funct3(3) | rd(5) | opcode(7)
 @atom_st ..... aq:1 rl:1 ..... ........ ..... ....... &atomic %rs2      %rs1 %rd
+# @atom_st ..... aq:1 rl:1 ..... ..... ... ..... ....... &atomic %rs2 %rs1 %rd
+
+@dma       ....... ..... ..... ... ..... ....... &dma %rs2 %rs1 %rd
+@sort      ....... ..... ..... ... ..... ....... &sort %rs2 %rs1 %rd
+@crush     ....... ..... ..... ... ..... ....... &crush %rs2 %rs1 %rd
+@expand    ....... ..... ..... ... ..... ....... &expand %rs2 %rs1 %rd
 
 @r4_rm   ..... ..  ..... ..... ... ..... ....... %rs3 %rs2 %rs1 %rm %rd
 @r_rm    .......   ..... ..... ... ..... ....... %rs2 %rs1 %rm %rd
@@ -1066,3 +1081,13 @@ amominu_h  11000 . . ..... ..... 001 ..... 0101111 @atom_st
 amomaxu_h  11100 . . ..... ..... 001 ..... 0101111 @atom_st
 amocas_b    00101 . . ..... ..... 000 ..... 0101111 @atom_st
 amocas_h    00101 . . ..... ..... 001 ..... 0101111 @atom_st
+
+
+# *** G233 Board Custom Instructions ***
+# DMA 矩阵转置指令
+# Encoding: funct7=0000110, rs2(grain), rs1(src), funct3=110, rd(dst), opcode=1111011
+
+dma        0000110 ..... ..... 110 ..... 1111011 @dma
+sort       0000111 ..... ..... 110 ..... 1111011 @sort
+crush      0001000 ..... ..... 110 ..... 1111011 @crush
+expand     0001001 ..... ..... 110 ..... 1111011 @expand

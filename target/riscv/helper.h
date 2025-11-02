@@ -1284,3 +1284,11 @@ DEF_HELPER_4(vgmul_vv, void, ptr, ptr, env, i32)
 DEF_HELPER_5(vsm4k_vi, void, ptr, ptr, i32, env, i32)
 DEF_HELPER_4(vsm4r_vv, void, ptr, ptr, env, i32)
 DEF_HELPER_4(vsm4r_vs, void, ptr, ptr, env, i32)
+
+
+/* G233 custom instructions */
+// DEF_HELPER_4(dma_transpose, void, env, tl, tl, tl)
+DEF_HELPER_4(dma, void, env, tl, tl, tl)
+DEF_HELPER_4(sort, void, env, tl, tl, tl)
+DEF_HELPER_4(crush, void, env, tl, tl, tl)
+DEF_HELPER_4(expand, void, env, tl, tl, tl)

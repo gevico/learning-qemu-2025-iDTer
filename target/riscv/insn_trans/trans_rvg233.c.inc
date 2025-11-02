@@ -1,12 +1,21 @@
+/*
+ * DMA 矩阵转置指令
+ * 功能：将源地址的矩阵按指定粒度转置到目标地址
+ */
 static bool trans_dma(DisasContext *ctx, arg_dma *a)
 {
     TCGv dst = get_gpr(ctx, a->rd, EXT_NONE);
     TCGv src = get_gpr(ctx, a->rs1, EXT_NONE);
     TCGv gran = get_gpr(ctx, a->rs2, EXT_NONE);
+    /* 调用 helper 函数执行 DMA 转置 */
     gen_helper_dma(tcg_env, dst, src, gran);
     return true;
 }
 
+/*
+ * Sort 排序指令
+ * 功能：对数组进行排序
+ */
 static bool trans_sort(DisasContext *ctx, arg_sort *a)
 {
     TCGv addr = get_gpr(ctx, a->rs1, EXT_NONE);
@@ -16,6 +25,10 @@ static bool trans_sort(DisasContext *ctx, arg_sort *a)
     return true;
 }
 
+/*
+ * Crush 压缩指令
+ * 功能：数据压缩操作
+ */
 static bool trans_crush(DisasContext *ctx, arg_crush *a)
 {
     TCGv dst = get_gpr(ctx, a->rd, EXT_NONE);
@@ -25,6 +38,10 @@ static bool trans_crush(DisasContext *ctx, arg_crush *a)
     return true;
 }
 
+/*
+ * Expand 扩展指令
+ * 功能：数据扩展操作
+ */
 static bool trans_expand(DisasContext *ctx, arg_expand *a)
 {
     TCGv dst = get_gpr(ctx, a->rd, EXT_NONE);

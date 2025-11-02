@@ -20,8 +20,10 @@ static bool trans_sort(DisasContext *ctx, arg_sort *a)
 {
     TCGv addr = get_gpr(ctx, a->rs1, EXT_NONE);
     TCGv sort_num = get_gpr(ctx, a->rd, EXT_NONE);
-    TCGv array_num = get_gpr(ctx, a->rs2, EXT_NONE);
-    gen_helper_sort(tcg_env, addr, array_num, sort_num);
+    TCGv array_size = get_gpr(ctx, a->rs2, EXT_NONE);
+
+    gen_helper_sort(tcg_env, addr, sort_num, array_size);
+
     return true;
 }
 

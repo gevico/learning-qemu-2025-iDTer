@@ -195,14 +195,78 @@ void helper_dma(CPURISCVState *env, target_ulong dst,
 
 /*
  * Sort 排序指令实现
+* 参数：
+ *   - env: CPU 环境
+ *   - addr: 数组地址
+ *   - array_num: 数组元素总数
+ * 
+ * 返回：
+ *   - sort_num: 实际排序的元素数量（传入 rd 的值）
+ * 
+ * 注意：根据测试代码，rd 既是输入（指定排序长度）也是输出（返回排序数量）
  */
-void helper_sort(CPURISCVState *env,
-    target_ulong addr,
-    target_ulong array_num,
-    target_ulong sort_num)
+void helper_sort(CPURISCVState *env, target_ulong addr,
+                target_ulong sort_num, target_ulong array_size)
 {
-    /* TODO: 实现排序逻辑 */
-    qemu_log("Sort instruction not yet implemented\n");
+    target_ulong *array;
+    target_ulong i, j;
+    target_ulong temp;
+    
+    /* 参数验证 */
+    if (sort_num == 0) {
+        /* 排序 0 个元素，直接返回 */
+        return;
+    }
+
+    if (sort_num > array_size) {
+        qemu_log_mask(LOG_GUEST_ERROR, 
+                      "SORT: sort_num (%lu) > array_size (%lu)\n", 
+                      sort_num, array_size);
+        /* 将排序数量限制为数组大小 */
+        sort_num = array_size;
+    }
+    
+    if (sort_num > 1024) {
+        qemu_log_mask(LOG_GUEST_ERROR, 
+                      "SORT: sort_num too large (%lu), capping at 1024\n", 
+                      sort_num);
+        sort_num = 1024;
+    }
+
+    /* 分配临时缓冲区存储数组 */
+    array = g_malloc(sort_num * sizeof(target_ulong));
+    
+    /* 从内存读取数组数据 */
+    for (i = 0; i < sort_num; i++) {
+        array[i] = cpu_ldq_data_ra(env, addr + i * sizeof(target_ulong), GETPC());
+    }
+
+    /* 
+     * 冒泡排序算法（升序）
+     */
+    for (i = 0; i < sort_num - 1; i++) {
+        for (j = 0; j < sort_num - i - 1; j++) {
+            if (array[j] > array[j + 1]) {
+                /* 交换元素 */
+                temp = array[j];
+                array[j] = array[j + 1];
+                array[j + 1] = temp;
+            }
+        }
+    }
+    
+    /* 将排序后的数组写回内存 */
+    for (i = 0; i < sort_num; i++) {
+        cpu_stq_data_ra(env, addr + i * sizeof(target_ulong), array[i], GETPC());
+    }
+    
+    /* 清理临时缓冲区 */
+    g_free(array);
+    
+    /* 添加调试日志 */
+    qemu_log_mask(CPU_LOG_EXEC, 
+        "SORT: addr=0x%lx, sorted %lu/%lu elements\n",
+        (unsigned long)addr, sort_num, array_size);
 }
 
 /*

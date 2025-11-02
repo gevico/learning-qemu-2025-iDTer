@@ -194,23 +194,19 @@ void helper_dma(CPURISCVState *env, target_ulong dst,
 }
 
 /*
- * Sort 排序指令实现
-* 参数：
- *   - env: CPU 环境
- *   - addr: 数组地址
- *   - array_num: 数组元素总数
+ * Sort 排序指令
  * 
- * 返回：
- *   - sort_num: 实际排序的元素数量（传入 rd 的值）
- * 
- * 注意：根据测试代码，rd 既是输入（指定排序长度）也是输出（返回排序数量）
+ * 指令格式：sort rd, rs1, rs2
+ *   - rd: 排序长度（要排序的元素数量）
+ *   - rs1: 数组地址
+ *   - rs2: 数组大小（用于边界检查）
  */
 void helper_sort(CPURISCVState *env, target_ulong addr,
                 target_ulong sort_num, target_ulong array_size)
 {
-    target_ulong *array;
+    uint32_t *array;
     target_ulong i, j;
-    target_ulong temp;
+    uint32_t temp;
     
     /* 参数验证 */
     if (sort_num == 0) {
@@ -234,11 +230,11 @@ void helper_sort(CPURISCVState *env, target_ulong addr,
     }
 
     /* 分配临时缓冲区存储数组 */
-    array = g_malloc(sort_num * sizeof(target_ulong));
+    array = g_malloc(sort_num * sizeof(uint32_t));
     
     /* 从内存读取数组数据 */
     for (i = 0; i < sort_num; i++) {
-        array[i] = cpu_ldq_data_ra(env, addr + i * sizeof(target_ulong), GETPC());
+        array[i] = cpu_ldq_data_ra(env, addr + i * sizeof(uint32_t), GETPC());
     }
 
     /* 
@@ -257,7 +253,7 @@ void helper_sort(CPURISCVState *env, target_ulong addr,
     
     /* 将排序后的数组写回内存 */
     for (i = 0; i < sort_num; i++) {
-        cpu_stq_data_ra(env, addr + i * sizeof(target_ulong), array[i], GETPC());
+        cpu_stq_data_ra(env, addr + i * sizeof(uint32_t), array[i], GETPC());
     }
     
     /* 清理临时缓冲区 */
@@ -269,16 +265,91 @@ void helper_sort(CPURISCVState *env, target_ulong addr,
         (unsigned long)addr, sort_num, array_size);
 }
 
-/*
-* Crush 压缩指令实现
-*/
-void helper_crush(CPURISCVState *env,
-     target_ulong dst,
-     target_ulong src,
-     target_ulong num)
+/* 
+ * G233 Crush 压缩指令 Helper
+ * 
+ * 功能：将 8 位数组元素的低 4 位两两打包成新的 8 位数组
+ * 
+ * 参数：
+ *   - env: CPU 环境
+ *   - dst_addr: 目标数组地址（压缩后的数据存储位置）
+ *   - src_addr: 源数组地址（待压缩的数据）
+ *   - src_num: 源数组元素数量
+ * 
+ * 压缩规则：
+ *   dst[i] = (src[2*i] & 0xF) | ((src[2*i+1] & 0xF) << 4)
+ * 
+ * 示例：
+ *   输入：{0xA, 0xB, 0xC, 0xD, 0xE, 0xF, 0x1, 0x2, 0x3, 0x4}
+ *   输出：{0xBA, 0xDC, 0xFE, 0x21, 0x43}
+ *   
+ *   解析：
+ *     dst[0] = (0xA & 0xF) | ((0xB & 0xF) << 4) = 0x0A | 0xB0 = 0xBA
+ *     dst[1] = (0xC & 0xF) | ((0xD & 0xF) << 4) = 0x0C | 0xD0 = 0xDC
+ *     dst[2] = (0xE & 0xF) | ((0xF & 0xF) << 4) = 0x0E | 0xF0 = 0xFE
+ *     dst[3] = (0x1 & 0xF) | ((0x2 & 0xF) << 4) = 0x01 | 0x20 = 0x21
+ *     dst[4] = (0x3 & 0xF) | ((0x4 & 0xF) << 4) = 0x03 | 0x40 = 0x43
+ */
+void helper_crush(CPURISCVState *env, target_ulong dst_addr, 
+                target_ulong src_addr, target_ulong src_num)
 {
-    /* TODO: 实现压缩逻辑 */
-    qemu_log("Crush instruction not yet implemented\n");
+    target_ulong i;
+    uint8_t low_nibble, high_nibble, packed_byte;
+    target_ulong dst_num;
+
+    /* 参数验证 */
+    if (src_num == 0) {
+        /* 没有数据需要压缩 */
+        return;
+    }
+    
+    if (src_num > 2048) {
+        qemu_log_mask(LOG_GUEST_ERROR, 
+                      "CRUSH: src_num too large (%lu), capping at 2048\n", 
+                      src_num);
+        src_num = 2048;
+    }
+
+    /* 计算目标数组大小（向上取整） */
+    dst_num = (src_num + 1) / 2;
+    
+    /* 
+     * 压缩算法：
+     * 遍历源数组，每次处理两个元素，打包成一个目标元素
+     */
+    for (i = 0; i < dst_num; i++) {
+        /* 读取第一个元素的低 4 位 */
+        low_nibble = cpu_ldub_data_ra(env, src_addr + 2 * i, GETPC()) & 0x0F;
+        
+        /* 读取第二个元素的低 4 位（如果存在） */
+        if (2 * i + 1 < src_num) {
+            high_nibble = cpu_ldub_data_ra(env, src_addr + 2 * i + 1, GETPC()) & 0x0F;
+        } else {
+            /* 奇数个元素时，最后一个元素的高 4 位填充 0 */
+            high_nibble = 0;
+        }
+        
+        /* 打包：低 4 位放在低位，高 4 位放在高位 */
+        packed_byte = low_nibble | (high_nibble << 4);
+        
+        /* 写入目标数组 */
+        cpu_stb_data_ra(env, dst_addr + i, packed_byte, GETPC());
+    }
+
+    /* 添加调试日志 */
+    // qemu_log_mask(CPU_LOG_EXEC, 
+    //     "CRUSH: src=0x%lx, dst=0x%lx, src_num=%lu, dst_num=%lu\n",
+    //     (unsigned long)src_addr, (unsigned long)dst_addr, 
+    //     src_num, dst_num);
+
+    // if (qemu_loglevel_mask(CPU_LOG_EXEC) && dst_num > 0) {
+    //     qemu_log("CRUSH: First few packed bytes: ");
+    //     for (i = 0; i < (dst_num < 5 ? dst_num : 5); i++) {
+    //         uint8_t byte = cpu_ldub_data_ra(env, dst_addr + i, GETPC());
+    //         qemu_log("0x%02X ", byte);
+    //     }
+    //     qemu_log("\n");
+    // }
 }
 
 /*

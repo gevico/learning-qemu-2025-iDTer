@@ -1084,10 +1084,14 @@ amocas_h    00101 . . ..... ..... 001 ..... 0101111 @atom_st
 
 
 # *** G233 Board Custom Instructions ***
-# DMA 矩阵转置指令
 # Encoding: funct7=0000110, rs2(grain), rs1(src), funct3=110, rd(dst), opcode=1111011
+dma        0000110 ..... ..... 110 ..... 1111011 @dma  # func7=6
 
-dma        0000110 ..... ..... 110 ..... 1111011 @dma
-sort       0000111 ..... ..... 110 ..... 1111011 @sort
-crush      0001000 ..... ..... 110 ..... 1111011 @crush
-expand     0001001 ..... ..... 110 ..... 1111011 @expand
+# Encoding: func7=0010110  |  rs2   |  rs1   |  funct3=110 |         rd        | opcode=1111011
+sort       0010110 ..... ..... 110 ..... 1111011 @sort  # func7=22
+
+# Encoding: func7=0100110  |  rs2   |  rs1   |  funct3=110 |         rd        | opcode=1111011
+crush      0100110 ..... ..... 110 ..... 1111011 @crush  # func7=38
+
+# Encoding: func7=0110110  |  rs2   |  rs1   |  funct3=110 |         rd        | opcode=1111011
+expand     0110110 ..... ..... 110 ..... 1111011 @expand  # func7=54

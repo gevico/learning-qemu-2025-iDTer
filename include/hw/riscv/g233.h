@@ -24,6 +24,7 @@
 #include "hw/boards.h"
 #include "hw/riscv/riscv_hart.h"
 #include "hw/gpio/sifive_gpio.h"
+#include "hw/ssi/g233_spi.h"
 
 #define TYPE_RISCV_G233_SOC "riscv.gevico.g233.soc"
 #define RISCV_G233_SOC(obj) \
@@ -39,6 +40,7 @@ typedef struct G233SoCState {
     DeviceState *uart0;
     DeviceState *pwm0;
     SIFIVEGPIOState gpio;
+    G233SPIState spi;      /* SPI 控制器 */
     MemoryRegion mask_rom;
 } G233SoCState;
 
@@ -61,12 +63,14 @@ enum {
     G233_DEV_PLIC,
     G233_DEV_GPIO0,
     G233_DEV_UART0, /* PL011 */
+    G233_DEV_SPI0,
     G233_DEV_PWM0,
     G233_DEV_DRAM
 };
 
 enum {
     G233_UART0_IRQ  = 1,
+    G233_SPI0_IRQ = 3,   /* SPI 中断号 */
     G233_PWM0_IRQ   = 2,
     G233_GPIO0_IRQ0 = 8
 };

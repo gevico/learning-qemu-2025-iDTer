@@ -40,6 +40,8 @@
 #include "hw/gpio/sifive_gpio.h" 
 #include "system/device_tree.h"
 #include "hw/riscv/riscv_hart.h"
+#include "hw/ssi/g233_spi.h"
+#include "hw/ssi/ssi.h"
 
 
 static const MemMapEntry g233_memmap[] = {
@@ -48,6 +50,7 @@ static const MemMapEntry g233_memmap[] = {
     [G233_DEV_PLIC] =     {  0xc000000,  0x4000000 },
     [G233_DEV_UART0] =    { 0x10000000,     0x1000 },
     [G233_DEV_GPIO0] =    { 0x10012000,     0x1000 },
+    [G233_DEV_SPI0] =     { 0x10018000,     0x1000 },  /* 新增：SPI 控制器 */
     [G233_DEV_PWM0] =     { 0x10015000,     0x1000 },
     [G233_DEV_DRAM] =     { 0x80000000, 0x40000000 },
 };
@@ -81,6 +84,9 @@ static void g233_soc_init(Object *obj)
     /* 初始化 GPIO 设备 */
     object_initialize_child(obj, "gpio", &s->gpio, TYPE_SIFIVE_GPIO);
 
+    /* 初始化 SPI 设备 */
+    object_initialize_child(obj, "spi", &s->spi, TYPE_G233_SPI);
+
 }
 
 static void g233_soc_realize(DeviceState *dev, Error **errp)
@@ -89,6 +95,7 @@ static void g233_soc_realize(DeviceState *dev, Error **errp)
     G233SoCState *s = RISCV_G233_SOC(dev);
     MemoryRegion *sys_mem = get_system_memory();
     const MemMapEntry *memmap = g233_memmap;
+    DeviceState *flash_dev;
 
     /* CPUs realize */
     if (!sysbus_realize(SYS_BUS_DEVICE(&s->cpus), errp)) {
@@ -146,6 +153,45 @@ static void g233_soc_realize(DeviceState *dev, Error **errp)
     s->uart0 = pl011_create(memmap[G233_DEV_UART0].base,
                             qdev_get_gpio_in(DEVICE(s->plic), G233_UART0_IRQ),
                             serial_hd(0));
+
+    /* SiFive.PWM0 */
+    create_unimplemented_device("riscv.g233.pwm0",
+        memmap[G233_DEV_PWM0].base, memmap[G233_DEV_PWM0].size);
+    
+    /* ==================== SPI 控制器和 Flash 初始化 ==================== */
+    /* Realize SPI controller */
+    if (!sysbus_realize(SYS_BUS_DEVICE(&s->spi), errp)) {
+        error_report("Failed to realize SPI controller");
+        return;
+    }
+
+    /* Map SPI controller registers */
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->spi), 0, memmap[G233_DEV_SPI0].base);
+
+    /* Connect SPI interrupt to PLIC */
+    sysbus_connect_irq(SYS_BUS_DEVICE(&s->spi), 0,
+                       qdev_get_gpio_in(DEVICE(s->plic), G233_SPI0_IRQ));
+
+    /* Create W25X16 Flash device on SPI bus */
+    flash_dev = qdev_new("w25x16");
+    
+    /* Realize Flash device on the SPI bus */
+    if (!qdev_realize_and_unref(flash_dev, 
+                                  qdev_get_child_bus(DEVICE(&s->spi), "spi"),
+                                  errp)) {
+        error_report("Failed to realize W25X16 Flash");
+        return;
+    }
+
+    /* 连接 CS0 到 Flash 芯片选择
+    * 根据寄存器文档，Flash 应该连接到 CS0（最常用的配置）
+    * CS 控制通过 SPI_CSCTRL 寄存器的 CS0_EN 和 CS0_ACT 位
+    */
+    qdev_connect_gpio_out_named(DEVICE(&s->spi), SSI_GPIO_CS, 0,  // 使用 CS0
+                                qdev_get_gpio_in_named(flash_dev,
+                                                       SSI_GPIO_CS, 0));
+
+    /* ================================================================== */
 
     /* SiFive.PWM0 */
     create_unimplemented_device("riscv.g233.pwm0",

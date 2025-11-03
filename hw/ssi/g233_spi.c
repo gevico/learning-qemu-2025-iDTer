@@ -3,7 +3,6 @@
 *
 * Copyright (c) 2025 G233 Project
 */
-
 #include "qemu/osdep.h"
 #include "hw/irq.h"
 #include "hw/qdev-properties.h"
@@ -27,6 +26,7 @@ static void g233_spi_rxfifo_reset(G233SPIState *s)
 {
     fifo8_reset(&s->rx_fifo);
     s->regs[R_SR] &= ~SR_RXNE;
+    s->rx_data_available = false;
 }
 
 static void g233_spi_update_cs(G233SPIState *s)
@@ -48,6 +48,7 @@ static void g233_spi_update_cs(G233SPIState *s)
     }
 }
 
+/* 检查并触发中断 */
 static void g233_spi_update_irq(G233SPIState *s)
 {
     bool irq_level = false;
@@ -66,6 +67,11 @@ static void g233_spi_update_irq(G233SPIState *s)
     if ((s->regs[R_CR2] & CR2_ERRIE) && 
         (s->regs[R_SR] & (SR_OVERRUN | SR_UNDERRUN))) {
         irq_level = true;
+
+        // qemu_log_mask(LOG_GUEST_ERROR,
+        //     "g233_spi: Error interrupt triggered - OVR=%d UDR=%d\n",
+        //     !!(s->regs[R_SR] & SR_OVERRUN),
+        //     !!(s->regs[R_SR] & SR_UNDERRUN));
     }
 
     qemu_set_irq(s->irq, irq_level);
@@ -82,8 +88,8 @@ static void g233_spi_flush_txfifo(G233SPIState *s)
     }
 
     if (!(s->regs[R_CR1] & CR1_MSTR)) {
-        qemu_log_mask(LOG_UNIMP, 
-                      "%s: slave mode not implemented\n", __func__);
+        // qemu_log_mask(LOG_UNIMP, 
+        //               "%s: slave mode not implemented\n", __func__);
         return;
     }
 
@@ -92,16 +98,25 @@ static void g233_spi_flush_txfifo(G233SPIState *s)
         s->regs[R_SR] |= SR_BSY;
 
         tx = fifo8_pop(&s->tx_fifo);
-        rx = ssi_transfer(s->spi, tx);
+        // qemu_log_mask(LOG_TRACE, "g233_spi: SSI transfer TX=0x%02x\n", tx);
 
-        /* 接收数据处理 */
+        rx = ssi_transfer(s->spi, tx);
+        // qemu_log_mask(LOG_TRACE, "g233_spi: SSI transfer RX=0x%02x\n", rx);
+
         if (!fifo8_is_full(&s->rx_fifo)) {
             fifo8_push(&s->rx_fifo, rx);
             s->regs[R_SR] |= SR_RXNE;
-        } else {
-            /* 接收 FIFO 已满，产生溢出错误 */
-            s->regs[R_SR] |= SR_OVERRUN;
+            s->rx_data_available = true;
         }
+
+        /* 接收数据处理 */
+        // if (!fifo8_is_full(&s->rx_fifo)) {
+        //     fifo8_push(&s->rx_fifo, rx);
+        //     s->regs[R_SR] |= SR_RXNE;
+        // } else {
+        //     /* 接收 FIFO 已满，产生溢出错误 */
+        //     s->regs[R_SR] |= SR_OVERRUN;
+        // }
 
         /* 清除忙标志 */
         s->regs[R_SR] &= ~SR_BSY;
@@ -125,6 +140,8 @@ static void g233_spi_reset(DeviceState *d)
     g233_spi_rxfifo_reset(s);
     g233_spi_update_cs(s);
     g233_spi_update_irq(s);
+
+    qemu_log_mask(LOG_TRACE, "g233_spi: device reset\n");
 }
 
 static bool g233_spi_is_bad_reg(hwaddr addr)
@@ -163,11 +180,14 @@ static uint64_t g233_spi_read(void *opaque, hwaddr addr, unsigned int size)
             r = fifo8_pop(&s->rx_fifo);
             if (fifo8_is_empty(&s->rx_fifo)) {
                 s->regs[R_SR] &= ~SR_RXNE;
+                s->rx_data_available = false;
             }
+            // qemu_log_mask(LOG_TRACE, "g233_spi: read DR = 0x%02x\n", r);
         } else {
             /* 读取空 FIFO，产生下溢错误 */
             s->regs[R_SR] |= SR_UNDERRUN;
             r = 0xFF;  /* 返回默认值 */
+            qemu_log_mask(LOG_GUEST_ERROR, "g233_spi: UNDERRUN on DR read\n");
         }
         break;
 
@@ -204,12 +224,17 @@ static void g233_spi_write(void *opaque, hwaddr addr,
     case R_CR1:
         /* 只保留 SPE 和 MSTR 位 */
         s->regs[R_CR1] = value & (CR1_SPE | CR1_MSTR);
+        // qemu_log_mask(LOG_TRACE, "g233_spi: CR1 = 0x%08x (SPE=%d, MSTR=%d)\n",
+        //              value, !!(value & CR1_SPE), !!(value & CR1_MSTR));
         /* TODO: 处理 SPE 和 MSTR 位变化 */
         break;
 
     case R_CR2:
         /* 保留中断使能位和 SSOE 位 */
         s->regs[R_CR2] = value & (CR2_TXEIE | CR2_RXNEIE | CR2_ERRIE | CR2_SSOE);
+        // qemu_log_mask(LOG_TRACE, "g233_spi: CR2 = 0x%08x (ERRIE=%d, RXNEIE=%d, TXEIE=%d)\n",
+        //              value, !!(value & CR2_ERRIE), 
+        //              !!(value & CR2_RXNEIE), !!(value & CR2_TXEIE));
         /* TODO: 处理中断使能位变化 */
         g233_spi_update_irq(s);
         break;
@@ -218,15 +243,34 @@ static void g233_spi_write(void *opaque, hwaddr addr,
         /* 写 1 清除错误标志 */
         if (value & SR_OVERRUN) {
             s->regs[R_SR] &= ~SR_OVERRUN;
+            qemu_log_mask(LOG_TRACE, "g233_spi: OVERRUN flag cleared\n");
         }
         if (value & SR_UNDERRUN) {
             s->regs[R_SR] &= ~SR_UNDERRUN;
+            qemu_log_mask(LOG_TRACE, "g233_spi: UNDERRUN flag cleared\n");
         }
         g233_spi_update_irq(s);
         break;
 
     case R_DR:
-        /* 写入发送数据 */
+        // qemu_log_mask(LOG_TRACE, "g233_spi: write DR = 0x%02x (RXNE=%d, rx_data_available=%d)\n",
+        //              (uint8_t)value, !!(s->regs[R_SR] & SR_RXNE), s->rx_data_available);
+        
+        /* 检查是否有未读取的数据 */
+        if (s->rx_data_available || (s->regs[R_SR] & SR_RXNE)) {
+            /* 溢出条件：RXNE=1 时再次写入 DR */
+            s->regs[R_SR] |= SR_OVERRUN;
+            qemu_log_mask(LOG_GUEST_ERROR,
+                         "g233_spi: OVERRUN detected! RXNE was set when writing DR\n");
+            
+            /* 触发中断 */
+            g233_spi_update_irq(s);
+            
+            /* 溢出时新数据会丢失，不执行传输 */
+            return;
+        }
+    
+        /* 正常传输，写入发送数据 */
         if (!(s->regs[R_SR] & SR_BSY)) {
             if (!fifo8_is_full(&s->tx_fifo)) {
                 fifo8_push(&s->tx_fifo, (uint8_t)value);
@@ -247,6 +291,7 @@ static void g233_spi_write(void *opaque, hwaddr addr,
 
     case R_CSCTRL:
         s->regs[R_CSCTRL] = value & 0xFF;
+        // qemu_log_mask(LOG_TRACE, "g233_spi: CSCTRL = 0x%02x\n", value & 0xFF);
         g233_spi_update_cs(s);
         break;
 
@@ -296,11 +341,14 @@ static void g233_spi_realize(DeviceState *dev, Error **errp)
 
     /* 初始化寄存器复位值 */
     s->regs[R_SR] = SR_TXE;  /* 发送缓冲区初始为空 */
+    s->rx_data_available = false;
+
+    // qemu_log_mask(LOG_TRACE, "g233_spi: device realized\n");
 }
 
 static Property g233_spi_properties[] = {
     DEFINE_PROP_UINT32("num-cs", G233SPIState, num_cs, 4)
-    // DEFINE_PROP_END_OF_LIST,
+    // DEFINE_PROP_END_OF_LIST()  /* 标准终止符（新版本QEMU已移除） */
 };
 
 static const VMStateDescription vmstate_g233_spi = {
@@ -311,6 +359,7 @@ static const VMStateDescription vmstate_g233_spi = {
         VMSTATE_UINT32_ARRAY(regs, G233SPIState, R_MAX),
         VMSTATE_FIFO8(tx_fifo, G233SPIState),
         VMSTATE_FIFO8(rx_fifo, G233SPIState),
+        VMSTATE_BOOL(rx_data_available, G233SPIState),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -325,6 +374,8 @@ static void g233_spi_class_init(ObjectClass *klass, const void *data)
     dc->vmsd = &vmstate_g233_spi;
 
     device_class_set_props_n(dc, g233_spi_properties, 1);  /* 明确告诉有 1 个属性 */
+    // device_class_set_props(dc, g233_spi_properties);  /* 自动检测数量 */
+
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
 }
 
